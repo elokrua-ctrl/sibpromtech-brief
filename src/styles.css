@@ -346,3 +346,12 @@ p { margin: 0; }
   .hero-actions .btn { width: 100%; }
   .respondent label { max-width: none; }
 }
+
+/* Автоотправка */
+.send h2 { font-size: 15px; letter-spacing: .02em; text-transform: none; }
+.send p { font-size: 14px; }
+.send .btn { margin-top: 12px; }
+.send-sending { border-left: 3px solid var(--steel); }
+.send-sent { border-left: 3px solid var(--steel); background: var(--steel-10); }
+.send-sent h2 { color: var(--steel); }
+.send-error { border-left: 3px solid var(--red); background: #fff6f6; }

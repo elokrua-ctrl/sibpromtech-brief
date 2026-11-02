@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BriefRecord } from '../data/types';
 import { buildPlan } from '../logic/plan';
 import { allAnswersRows, buildClientDoc, buildExecutorDoc, buildRoadmapDoc } from '../logic/report';
 import { docToText, fileStamp, roadmapCsv, toExportJson } from '../logic/exporters';
 import type { Doc } from '../logic/doc';
 import { copyText, saveFile } from '../storage/download';
+import { answersHash, sendCompleted } from '../storage/telegram';
+import { deliveryEnabled } from '../config/delivery';
 import { BrandMark } from './BrandMark';
 import { DocView } from './DocView';
 import { RoadmapView } from './RoadmapView';
@@ -25,13 +27,47 @@ interface Props {
   onHome: () => void;
   onReset?: () => void;
   onLoadOther?: () => void;
+  onUpdate?: (r: BriefRecord) => void;
 }
 
-export function Results({ rec, mode, onEdit, onHome, onReset, onLoadOther }: Props) {
+type SendState = 'off' | 'sending' | 'sent' | 'error';
+
+export function Results({ rec, mode, onEdit, onHome, onReset, onLoadOther, onUpdate }: Props) {
   const [tab, setTab] = useState<Tab>(mode === 'view' ? 'executor' : 'client');
   const [status, setStatus] = useState<{ text: string; kind: 'ok' | 'err' } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  const autoSend = mode === 'own' && deliveryEnabled() && rec.status === 'completed';
+  const [send, setSend] = useState<SendState>(autoSend ? 'sending' : 'off');
+  const [sendError, setSendError] = useState('');
+  const sending = useRef(false);
+
+  const deliver = () => {
+    if (!autoSend || sending.current) return;
+    const hash = answersHash(rec);
+    if (rec.delivery?.completedHash === hash) {
+      setSend('sent');
+      return;
+    }
+    sending.current = true;
+    setSend('sending');
+    sendCompleted(rec, rec.delivery?.completedHash ? 'updated' : 'completed')
+      .then(() => {
+        onUpdate?.({ ...rec, delivery: { ...rec.delivery, completedHash: hash, completedSentAt: new Date().toISOString() } });
+        setSend('sent');
+      })
+      .catch((e: Error) => {
+        console.error(e);
+        setSendError(e.message);
+        setSend('error');
+      })
+      .finally(() => {
+        sending.current = false;
+      });
+  };
+
+  // Автоотправка исполнителю сразу после завершения (и после изменения ответов)
+  useEffect(deliver, [rec.answers, rec.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const plan = useMemo(() => buildPlan(rec.answers), [rec.answers]);
   const docs = useMemo(
@@ -168,12 +204,46 @@ export function Results({ rec, mode, onEdit, onHome, onReset, onLoadOther }: Pro
         </main>
 
         <aside className="rs-side">
+          {autoSend && (
+            <div className={`panel send send-${send}`} data-testid="send-panel" data-state={send}>
+              {send === 'sending' && (
+                <>
+                  <h2>Отправляем ответы…</h2>
+                  <p>Не закрывайте страницу несколько секунд.</p>
+                </>
+              )}
+              {send === 'sent' && (
+                <>
+                  <h2>✓ Ответы отправлены</h2>
+                  <p>Исполнитель получил ваши ответы. Больше ничего делать не нужно — спасибо!</p>
+                  <p className="panel-small">Если измените ответы, исполнитель получит обновлённую версию автоматически.</p>
+                </>
+              )}
+              {send === 'error' && (
+                <>
+                  <h2>Не удалось отправить</h2>
+                  <p>Похоже, пропал интернет. Ответы сохранены в этом браузере — попробуйте ещё раз.</p>
+                  <button className="btn btn-primary btn-block" onClick={deliver} data-testid="resend">
+                    Отправить ещё раз
+                  </button>
+                  {sendError && <p className="panel-small">Техническая причина: {sendError}</p>}
+                </>
+              )}
+            </div>
+          )}
+
           <div className="panel">
-            <h2>Передать исполнителю</h2>
-            <p className="panel-warn">
-              Ответы <strong>не отправляются автоматически</strong>. Скачайте файлы или скопируйте текст и отправьте их исполнителю любым удобным
-              способом.
-            </p>
+            {autoSend ? (
+              <h2>Скачать копию себе</h2>
+            ) : (
+              <>
+                <h2>Передать исполнителю</h2>
+                <p className="panel-warn">
+                  Ответы <strong>не отправляются автоматически</strong>. Скачайте файлы или скопируйте текст и отправьте их исполнителю любым
+                  удобным способом.
+                </p>
+              </>
+            )}
             <div className="export-list">
               {exports.map((e) => (
                 <button key={e.key} className="btn btn-export" onClick={e.run} disabled={!!busy} data-testid={`export-${e.key}`}>

@@ -178,4 +178,11 @@ export interface BriefRecord {
   currentQuestionId?: string;
   respondent?: { name?: string; role?: string };
   answers: Answers;
+  /** Служебное: что и когда уже отправлено исполнителю */
+  delivery?: {
+    completedHash?: string;
+    completedSentAt?: string;
+    draftHash?: string;
+    draftSentAt?: string;
+  };
 }

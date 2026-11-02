@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BriefRecord } from './data/types';
 import { newBrief, repository } from './storage/repository';
 import { warmupDownloads } from './storage/download';
+import { answersHash, sendDraftBeacon } from './storage/telegram';
 import { StartScreen } from './components/StartScreen';
 import { Survey } from './components/Survey';
 import { Results } from './components/Results';
@@ -21,6 +22,27 @@ export function App() {
   const [rec, setRec] = useState<BriefRecord | null>(null);
   const [loaded, setLoaded] = useState(false);
   const saveTimer = useRef<number | undefined>(undefined);
+  const recRef = useRef<BriefRecord | null>(null);
+  recRef.current = rec;
+
+  // Если человек закрыл вкладку или свернул браузер, не закончив, — исполнителю уходит черновик
+  useEffect(() => {
+    const flush = () => {
+      const r = recRef.current;
+      if (!r || !sendDraftBeacon(r)) return;
+      const n: BriefRecord = { ...r, delivery: { ...r.delivery, draftHash: answersHash(r), draftSentAt: new Date().toISOString() } };
+      recRef.current = n;
+      setRec(n);
+      void repository.saveCurrent(n);
+    };
+    const onVis = () => document.visibilityState === 'hidden' && flush();
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, []);
 
   useEffect(() => {
     warmupDownloads();
@@ -71,7 +93,7 @@ export function App() {
     case 'brief':
       return <Survey rec={rec!} onChange={update} onFinish={() => go('results')} onExit={() => go('start')} />;
     case 'results':
-      return <Results rec={rec!} mode="own" onEdit={() => go('brief')} onHome={() => go('start')} onReset={reset} />;
+      return <Results rec={rec!} mode="own" onUpdate={update} onEdit={() => go('brief')} onHome={() => go('start')} onReset={reset} />;
     case 'view':
       return <ViewMode localRec={rec} onHome={() => go('start')} />;
     default:

@@ -27,6 +27,17 @@ const check = (cond, msg) => {
 
 const browser = await chromium.launch();
 
+// Telegram подменяется заглушкой: проверяем, что и что отправляется, не трогая настоящего бота
+const tgCalls = [];
+async function mockTelegram(ctx) {
+  await ctx.route('https://api.telegram.org/**', async (route) => {
+    const req = route.request();
+    tgCalls.push({ method: req.url().split('/').pop(), body: req.postDataBuffer()?.toString('latin1') ?? '' });
+    await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"ok":true,"result":{}}' });
+  });
+}
+const deliveryOn = !/telegramChatId:(""|'')/.test(readFileSync(file, 'utf8'));
+
 async function qid(page) {
   return page.getAttribute('[data-testid="question-title"]', 'data-qid');
 }
@@ -43,6 +54,7 @@ async function next(page) {
   console.log('Сценарий 1: полный проход, условные переходы, возврат, сохранение, экспорт');
   const ctx = await browser.newContext({ viewport: { width: 1366, height: 900 }, acceptDownloads: true });
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await mockTelegram(ctx);
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -200,6 +212,20 @@ async function next(page) {
   await page.click('[data-testid="next"]');
   await page.waitForSelector('[data-testid="results-title"]');
   check((await page.textContent('[data-testid="results-title"]')).includes('Ваши приоритеты развития СИБПРОМТЕХ'), 'страница итогов для заказчика');
+  const autoSend = await page.$('[data-testid="send-panel"]');
+  if (autoSend) {
+    await page.waitForSelector('[data-testid="send-panel"][data-state="sent"]', { timeout: 20000 });
+    const methods = tgCalls.map((c) => c.method);
+    check(methods.filter((m) => m === 'sendMessage').length === 1 && methods.filter((m) => m === 'sendDocument').length >= 2, `автоотправка: сообщение + PDF + JSON (${methods.join(', ')})`);
+    check(tgCalls.some((c) => c.body.includes('%PDF-')) && tgCalls.some((c) => c.body.includes('sibpromtech-brief-export')), 'в Telegram ушли PDF и JSON');
+    check(await page.isVisible('text=Ответы отправлены'), 'заказчик видит «Ответы отправлены»');
+    const before = tgCalls.length;
+    await page.waitForTimeout(400);
+    await page.reload();
+    await page.waitForTimeout(1500);
+    await page.waitForSelector('[data-testid="send-panel"][data-state="sent"]', { timeout: 20000 });
+    check(tgCalls.length === before, 'повторного отправления при перезагрузке нет');
+  } else console.log('  (автоотправка выключена — проверяем ручную передачу)');
   await page.screenshot({ path: `${shots}/05-results-client-desktop.png`, fullPage: true });
 
   const clientText = await page.textContent('.rs-main');
@@ -305,6 +331,31 @@ async function next(page) {
   check(t.includes('Заказчик пока не знает'), 'ответы «Пока не знаю» попадают в недостающую информацию');
   await page.click('[data-testid="tab-roadmap"]');
   await page.screenshot({ path: `${shots}/13-roadmap-mobile.png`, fullPage: true });
+  await ctx.close();
+}
+
+/* ===== Сценарий 2б: бросил на полпути — уходит черновик ===== */
+if (deliveryOn) {
+  console.log('Сценарий 2б: черновик при закрытии вкладки');
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await mockTelegram(ctx);
+  const page = await ctx.newPage();
+  const before = tgCalls.length;
+  await page.goto(url);
+  await page.click('[data-testid="start"]');
+  await opt(page, 'more_requests');
+  await next(page);
+  await opt(page, 'budget');
+  await next(page);
+  await opt(page, 'regional');
+  await next(page);
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await page.waitForTimeout(1500);
+  const drafts = tgCalls.slice(before).filter((c) => c.method === 'sendDocument' && c.body.includes('chernovik'));
+  check(drafts.length === 1, 'черновик отправлен один раз');
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await page.waitForTimeout(800);
+  check(tgCalls.slice(before).filter((c) => c.body.includes('chernovik')).length === 1, 'без новых ответов черновик не дублируется');
   await ctx.close();
 }
 

@@ -3,6 +3,7 @@ import { STAGES } from '../data/questions';
 import type { BriefRecord } from '../data/types';
 import { resolve } from '../logic/flow';
 import { BrandMark } from './BrandMark';
+import { deliveryEnabled } from '../config/delivery';
 
 interface Props {
   rec: BriefRecord | null;
@@ -131,9 +132,15 @@ export function StartScreen({ rec, persistent, onStart, onContinue, onResults, o
             <h2>Где хранятся ответы</h2>
             <p>
               {persistent
-                ? 'Ответы сохраняются только в этом браузере на этом устройстве. '
-                : 'В этом окне браузер не разрешает сохранять данные: не закрывайте вкладку до конца заполнения. '}
-              <strong>Исполнителю они автоматически не отправляются</strong> — в конце вы скачаете PDF или файл с ответами и передадите их.
+                ? 'Пока вы заполняете, ответы сохраняются в этом браузере — можно прерваться и вернуться. '
+                : 'В этом окне браузер не разрешает сохранять черновик: постарайтесь пройти бриф за один раз. '}
+              {deliveryEnabled() ? (
+                <strong>Когда вы закончите, ответы автоматически отправятся исполнителю — ничего скачивать и пересылать не нужно.</strong>
+              ) : (
+                <>
+                  <strong>Исполнителю они автоматически не отправляются</strong> — в конце вы скачаете PDF или файл с ответами и передадите их.
+                </>
+              )}
             </p>
           </div>
           <div>
